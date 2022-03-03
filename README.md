@@ -1,9 +1,7 @@
-# go-ethereum code analysis
+# Geth 코어 코드 분석
 
-**I hope to analyze the code of Ethereum to learn the use of blockchain technology and GO language.**
-
-Analysis of [go-ethereum](https://github.com/ethereum/go-ethereum)  
-The process, I hope to start from the low-level technical components that rely on less, and slowly go deep into the core logic.
+[go-ethereum](https://github.com/ethereum/go-ethereum) 코드를 분석한 자료.
+먼저, 로우-레벨 기술에 대한 이야기부터 시작한 후 이를 전체적으로 조망하는 순서로 진행해보고자 합니다.
 
 ## Table of contents
 
