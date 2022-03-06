@@ -4,7 +4,7 @@
 
 먼저, 로우-레벨 기술에 대한 이야기부터 시작한 후 이를 전체적으로 조망하는 순서로 진행해보고자 합니다.
 
-## Table of contents
+## 목차
 
 - [go ethereum code analysis (account, smart contract, logs, etc...)](/go-ethereum-code-analysis.md)
 - [yellow book symbol index](symbol-index.md)
