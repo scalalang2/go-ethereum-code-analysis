@@ -1,10 +1,8 @@
-## Go-ethereum source code analysis
-## Go ethereum 디렉토리 
+## Go ethereum 디렉토리 구조
 
-The organization structure of the go-ethereum project is basically a directory divided by functional modules. The following is a brief introduction to the structure of each directory. Each directory is also a package in the GO language. I understand that the package in Java should be similar. meaning.
+Geth 프로젝트의 디렉토리 구조는 각각의 모듈이 별도로 구현됩니다. 각 모듈은 하나의 독립적으로 동작하는 기능으로 나중에 이를 하나로 조합하여 사용됩니다. 각 디렉토리는 Go언어로 작성된 패키지 이며 여기서는 각 모듈별로 제공하는 기능을 대략적으로 기술합니다.
 
-    accounts        	Achieved a high-level Ethereum account management
-    bmt			Implementation of binary Merkel tree
+    accounts        	이더리움 계정의 추상화된 코드를 제공함
     build			Mainly some scripts and configurations compiled and built
     cmd			A lot of command line tools, one by one
     	/abigen		Source code generator to convert Ethereum contract definitions into easy to use, compile-time type-safe Go packages
