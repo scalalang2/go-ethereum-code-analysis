@@ -5,7 +5,7 @@ Geth 프로젝트의 디렉토리 구조는 각각의 모듈이 별도로 구현
     accounts        	이더리움 계정의 추상화된 코드를 제공함
     build			스크립트(sh) 파일과 빌드에 관한 설정 파일들이 저장된 곳
     cmd			다양한 CLI 명령어 도구
-        /abidump    컨트랙트의 calldata 를 파싱해서 원본을 추출하는 도구
+            /abidump    컨트랙트의 calldata 를 파싱해서 원본을 추출하는 도구
     	/abigen		Solidity 소스 코드로부터 ABI파일을 만드는 명령어
         /clef       노드의 운영과 개인키의 관리를 분리시키기 위해 사용되는 명령어
     	/bootnode	네트워크 디스커버리만을 위한 노드 실행
