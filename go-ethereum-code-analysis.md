@@ -30,14 +30,14 @@ Geth 프로젝트의 디렉토리 구조는 각각의 모듈이 별도로 구현
     graphql			GraphQL을 제공하는 도구
     les			경량화된 이더리움 서버 제공
     light			이더리움 경량 클라이언트 코드 (블록 헤더만을 검증하고 실제 트랜재션 수행 능력은 없음)
-    log				로깅 패키지
+    log			로깅 패키지
     metrics			그라파나 연동을 위한 메트릭을 제공한다.
     miner			블록 생성 및 마이닝 기능을 제공한다.
     mobile			모바일에서 쓰이기 위한 wrapper 제공
-    node		다양한 타입의 이더리움 노드
-    p2p				p2p 네트워크 프로토콜
-    rlp				recursive length prefix의 약자로 이더리움에서 사용되는 직렬화 알고리즘
-    rpc				API와 서비스에서 사용되는 원격 함수 호출
+    node			다양한 타입의 이더리움 노드
+    p2p			p2p 네트워크 프로토콜
+    rlp			recursive length prefix의 약자로 이더리움에서 사용되는 직렬화 알고리즘
+    rpc			API와 서비스에서 사용되는 원격 함수 호출
     tests			테스트 목적
     trie			머클 패트리샤 트리의 구현체
 
