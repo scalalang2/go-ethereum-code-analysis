@@ -3,44 +3,42 @@
 Geth 프로젝트의 디렉토리 구조는 각각의 모듈이 별도로 구현됩니다. 각 모듈은 하나의 독립적으로 동작하는 기능으로 나중에 이를 하나로 조합하여 사용됩니다. 각 디렉토리는 Go언어로 작성된 패키지 이며 여기서는 각 모듈별로 제공하는 기능을 대략적으로 기술합니다.
 
     accounts        	이더리움 계정의 추상화된 코드를 제공함
-    build			Mainly some scripts and configurations compiled and built
-    cmd			A lot of command line tools, one by one
-    	/abigen		Source code generator to convert Ethereum contract definitions into easy to use, compile-time type-safe Go packages
-    	/bootnode	Start a node that only implements network discovery
-    	/evm		Ethereum virtual machine development tool to provide a configurable, isolated code debugging environment
+    build			스크립트(sh) 파일과 빌드에 관한 설정 파일들이 저장된 곳
+    cmd			다양한 CLI 명령어 도구
+        /abidump    컨트랙트의 calldata 를 파싱해서 원본을 추출하는 도구
+    	/abigen		Solidity 소스 코드로부터 ABI파일을 만드는 명령어
+        /clef       노드의 운영과 개인키의 관리를 분리시키기 위해 사용되는 명령어
+    	/bootnode	네트워크 디스커버리만을 위한 노드 실행
+    	/evm		설정 가능하고 독립적으로 디버깅이 가능한 환경을 제공하는 이더리움 가상 머신 개발 도구
     	/faucet
-    	/geth		Ethereum command line client, the most important tool
-    	/p2psim		Provides a tool to simulate the http API
-    	/puppeth	Create a new Ethereum network wizard, such as Clique POA consensus
-    	/rlpdump 	Provides a formatted output of RLP data
-    	/swarm		Swarm network utils
-    	/util		Provide some public tools
-    	/wnode		This is a simple Whisper node. It can be used as a standalone boot node. In addition, it can be used for different testing and diagnostic purposes.
-    common			Provide some public tools
-    compression		Package rle implements the run-length encoding used for Ethereum data.
-    consensus		Provide some consensus algorithms from Ethereum, such as ethhash, clique(proof-of-authority)
-    console			console package
-    contracts		Smart contracts deployed in genesis block, such as checkqueue, DAO...
-    core			Ethereum's core data structures and algorithms (virtual machines, states, blockchains, Bloom filters)
-    crypto			Encryption and hash algorithms
-    eth			Implemented the consensus of Ethereum
-    ethclient		Provides RPC client for Ethereum
-    ethdb			Eth's database (including the actual use of leveldb and the in-memory database for testing)
-    ethstats		Provide a report on the status of the network
-    event			Handling real-time events
-    les			Implemented a lightweight server of Ethereum
-    light			Achieve on-demand retrieval for Ethereum lightweight clients
-    log			Provide log information that is friendly to humans and computers
-    metrics			Provide disk counter, publish to grafana for sample
-    miner			Provide block creation and mining in Ethereum
-    mobile			Some wrappers used by the mobile side
-    node			Ethereum's various types of nodes
-    p2p			Ethereum p2p network protocol
-    rlp			Ethereum serialization, called recursive length prefix
-    rpc			Remote method call, used in APIs and services
-    swarm			Swarm network processing
-    tests			testing purposes
-    trie			Ethereum's important data structure package: trie implements Merkle Patricia Tries.
-    whisper			A protocol for the whisper node is provided.
+    	/geth		이더리움 클라이언트 
+    	/p2psim		Http API를 시뮬레이션 하기 위한 명령어
+    	/puppeth	이더리움 네트워크 생성 위자드
+    	/rlpdump 	RLP 데이터의 형식화된 출력을 도와준다.
+    	/utils		유틸성 패키지
+    common			공통 도구를 제공한다.
+    consensus		ethash나 clique, ibft 같은 합의 엔진을 제공함
+    console			이더리움 콘솔 패키지
+    contracts		제네시스 블록에 배포되는 컨트랙트. 예를 들어 비콘체인에서 쓰이는 체크포인트 오라클 등이 있다.
+    core			이더리움의 코어 데이터 구조체 혹은 알고리즘이 저장됨. (가상머신, 상태, 블록체인, 블룸필터 등)
+    crypto			암호화 & 해시 알고리즘
+    eth			    이더리움의 합의 구현체
+    ethclient		이더리움 RPC 클라이언트 코드
+    ethdb			이더리움 데이터베이스 (실제 저장소인 level-db와 테스트 용도인 in-memory 데이터베이스가 구현되어 있다.)
+    ethstats		네트워크 상태에 대한 정보를 제공한다.
+    event			실시간 이벤트 관리
+    graphql         GraphQL을 제공하는 도구
+    les			    경량화된 이더리움 서버 제공
+    light			이더리움 경량 클라이언트 코드 (블록 헤더만을 검증하고 실제 트랜재션 수행 능력은 없음)
+    log			    로깅 패키지
+    metrics			그라파나 연동을 위한 메트릭을 제공한다.
+    miner			블록 생성 및 마이닝 기능을 제공한다.
+    mobile			모바일에서 쓰이기 위한 wrapper 제공
+    node			다양한 타입의 이더리움 노드
+    p2p			    p2p 네트워크 프로토콜
+    rlp			    recursive length prefix의 약자로 이더리움에서 사용되는 직렬화 알고리즘
+    rpc			    API와 서비스에서 사용되는 원격 함수 호출
+    tests			테스트 목적
+    trie			머클 패트리샤 트리의 구현체
 
-It can be seen that the code of Ethereum is still quite large, but roughly speaking, the code structure is still quite good. I hope to analyze from some relatively independent modules. Then delve into the internal code. The focus may be on modules such as p2p networks that are not covered in the Yellow Book.
+이더리움의 코드 구조가 꽤 방대해 보이지만, 코드 구조 자체는 굉장히 퀄리티가 좋은 편이다. 우선 각각의 독립적인 모듈의 내부 코드를 분석하고 추후에 전체적으로 조망하는 순서로 정리하고자 한다.
