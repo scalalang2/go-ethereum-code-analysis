@@ -14,16 +14,16 @@
 - [rpc analysis](/rpc-analysis.md)
 - [p2p analysis](/p2p-analysis.md)
 - [eth protocol analysis](/eth-analysis.md)
-- **core analysis**
+- **코어 코드 분석**
   - [blockchain index, chain_indexer analysis](/core-chain_indexer-analysis.md)
   - [bloom filter index, bloombits-analysis](/core-bloombits-analysis.md)
   - [ethereum trie, tree management, rollback, state-analysis](/core-state-analysis.md)
   - [transaction processing](/core-state-process-analysis.md)
-  - **vm analysis**
+  - **가상머신 분석**
     - [stack & data structure](/core-vm-stack-memory-analysis.md)
     - [instruction, jump table, interpreter analysis](/core-vm-jumptable-instruction.md)
     - [vm analysis](/core-vm-analysis.md)
-  - **transaction pool management**
+  - **트랜잭션 **
     - [transaction execution](/core-txlist-data-structure-analysis.md)
     - [transaction pool management](/core-txpool-analysis.md)
   - [genesis block](/core-genesis-analysis.md)
