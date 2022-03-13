@@ -23,7 +23,7 @@
     - [stack & data structure](/core-vm-stack-memory-analysis.md)
     - [instruction, jump table, interpreter analysis](/core-vm-jumptable-instruction.md)
     - [vm analysis](/core-vm-analysis.md)
-  - **트랜잭션 **
+  - **트랜잭션 풀 관리**
     - [transaction execution](/core-txlist-data-structure-analysis.md)
     - [transaction pool management](/core-txpool-analysis.md)
   - [genesis block](/core-genesis-analysis.md)
