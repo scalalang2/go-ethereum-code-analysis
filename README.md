@@ -7,7 +7,6 @@
 ## 목차
 
 - [go ethereum code analysis (account, smart contract, logs, etc...)](/go-ethereum-code-analysis.md)
-- [yellow book symbol index](symbol-index.md)
 - [rlp, rlpx analysis](/rlp-analysis.md)
 - [trie source analysis](/trie-analysis.md)
 - [ethdb analysis](/ethdb-analysis.md)
