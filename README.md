@@ -4,6 +4,13 @@
 
 먼저, 로우-레벨 기술에 대한 이야기부터 시작한 후 이를 전체적으로 조망하는 순서로 진행해보고자 합니다.
 
+#### 사전 고지
+본 문서는 [Go-Ethereum analysis (English Version)](https://github.com/agiletechvn/go-ethereum-code-analysis)문서를 한국어로 재해석한 문서입니다. 중국어 버전이 최초라고 알려져 있습니다.
+
+```
+수식 기호를 잘 모르기도 하고 제 목적은 명확한 Definition을 알고 싶은게 아니라 고 수준에서 전체 코드 구조를 조망하고 싶기 때문에, Yello Paper에 있는 복잡한 수식은 모두 제거하고 쉬운 말 + 제 해석으로 풀어 쓸 계획입니다.
+```
+
 ## 목차
 
 - [go ethereum code analysis (account, smart contract, logs, etc...)](/go-ethereum-code-analysis.md)

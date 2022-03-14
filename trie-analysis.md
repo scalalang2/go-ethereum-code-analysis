@@ -23,7 +23,7 @@ The difference between a prefix tree and a Trie tree is that the Trie tree assig
 
 ![image](picture/trie_2.png)
 
-The eight Key Value pairs stored in the above figure can see the characteristics of the prefix tree.
+아래 8 개의 Key/Value 값들이 prefix 트리로 저장된 모습을 보여준다.
 
 | Key              | value |
 | ---------------- | ----: |
