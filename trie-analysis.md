@@ -1,23 +1,9 @@
 `trie` 패키지니는 머클 패트리샤 트리(MPT)를 구현한 내용이다. MPT 자료구조는 트라이 트리의 변형 버전으로 이더리움에서 계정 정보,컨트랙트 상태 정보, 트랜잭션 정보, 레시피 등을 저장하는데 쓰이는 중요한 자료구조이다. MPT는 트라이, 패트리샤 트라이, 그리고 머클 트리를 결합한 모델이고 각 모델은 아래 별도로 설명할 것이다.
 
-## 트라이 트리 ([설명](trie-structure.md))
-The Trie tree, also known as the dictionary tree, word search tree or prefix tree, is a multi-fork tree structure for fast retrieval. For example, the dictionary tree of English letters is a 26-fork tree, and the digital dictionary tree is a 10-fork tree.  
-
-
-Trie trees can take advantage of the common prefix of strings to save storage space. As shown in the following figure, the trie tree saves 6 strings with 10 nodes: tea, ten, to, in, inn, int:
-
-![image](picture/trie_1.jpg)
-
-In the trie tree, the common prefix for the strings in, inn, and int is "in", so you can store only one copy of "in" to save space. Of course, if there are a large number of strings in the system and these strings have no common prefix, the corresponding trie tree will consume a lot of memory, which is also a disadvantage of the trie tree.
-
-The basic properties of the Trie tree can be summarized as:  
-
-- The root node does not contain characters, and each node contains only one character except the root node.  
-- From the root node to a node, the characters passing through the path are connected, which is the string corresponding to the node.  
-- All children of each node contain different strings.  
-
-## Patricia Tries (prefix tree)  
-The difference between a prefix tree and a Trie tree is that the Trie tree assigns a node to each string, which degenerates the Trie tree of strings that are long but have no public nodes into an array. In Ethereum, many such nodes are constructed by hackers to cause denial of service attacks. The difference between prefix trees is that if the nodes have a common prefix, then the common prefix is ​​used, otherwise all the remaining nodes are inserted into the same node. The optimization of Patricia relative to Tire is as follows:
+## 트라이 트리
+트라이에 대한 설명은 [이 문서](trie-structure.md)로 대체한다.
+## 패트리샤 트라이 (Patricia Tries | Prefix tree)
+Prefix 트리와 트라이의 차이점은 트라이는 '한 글자'만 노드에 기록하는 반면, Prefix 트리는 공통 prefix로 압축해서 저장하는 방법이다. 트라이 구조를 조금 최적화 했다고 보면된다. 아래 그림은 Trie를 패트리샤 트라이로 바꿔서 저장하는 방법이다.
 
 ![Optimization of Tire to Patricia](picture/patricia_tire.png)
 
@@ -36,96 +22,47 @@ The difference between a prefix tree and a Trie tree is that the Trie tree assig
 | 6c0a8f740d16y03G | 43    |
 | 6c0a8f740d16vcc1 | 48    |
 
-## Merkle tree   
-Merkle Tree, also commonly referred to as Hash Tree, as the name suggests, is a tree that stores hash values. The leaves of a Merkle tree are the hash values ​​of data blocks (for example, a directory or files). A non-leaf node is a hash of its corresponding child node concatenated string.
+## 머클 트리 ( Merkle tree )
+머클 트리는 해시 값을 저장하는 트리이다. 리프 노드는 저장한 데이터를 해시한 값을 가지고 있으며, 상위 노드는 자식 노드의 해시값을 덧 붙인 값의 해시 문자열을 저장한다. `h(c_h1, c_h2)`
 
 
 ![image](picture/trie_3.png)
 
-The main function of Merkle Tree is that when I get Top Hash, this hash value represents the information summary of the whole tree. When any data in the tree changes, the value of Top Hash will change. The value of Top Hash is stored in the block header of the blockchain. The block header must be certified by the workload. This means that I can verify the block information as long as I get a block header. Please refer to that blog for more detailed information. There is a detailed introduction.
+머클 트리의 주요 기능은, 최상위 노드에 저장된 루트 해시가 트리 전체의 정보를 내포하고 있다는 것이다. 트리에서 어떤 노드가 변경되면 그에 연결된 상위 노드의 해시가 전부 변경된다. 루트 노드의 해시는 블록체인의 블록 헤더에 저장되는데 블록 헤더는 반드시 검증되어야 하는 값이다. 이 뜻은, 블록 헤더만 알고있으면 블록체인 전체 내용을 검증할 수 있다.
 
+## Modified Merkle Patricia Tree (MPT)
+이더리움에서 각 블록은 3개의 MPT 트리를 저장하고 있다.
 
+- 트랜잭션 트리
+- 레시피 트리 (트랜잭션 처리에 따른 데이터를 저장하는 트리)
+- 상태 트리 (컨트랙트 또는 사용자 계정 정보를 저장함)
 
+아래 그림에서는 state root, tx root, reciept root를 저장하고 있는 2개의 블록을 보여준다. 두 번째 블록에서 `account 175`의 값이 27에서 45로 변경된 모습을 보여준다.
 
-## Ethereum MPT  
-Each block of Ethereum contains three MPT trees, respectively
+이더리움의 MPT는 prefix tree와 비슷하다. 하나의 키/밸류 값을 저장하며 트리 순회 과정에서 리프 노드에 도달하면 값을 조회할 수 있다. 키값은 트리 순회 과정에서 각 브랜치 노드에서 값을 덧붙여 전체 키값을 구한다. MPT 트리는 두개의 최적화 노드가 제공된다.
 
-- Transaction tree
-- Receipt tree (some data during the execution of the transaction)
-- Status tree (account information, contract account and user account)
-
-In the figure below are two block headers, where state root, tx root receipt root stores the roots of the three trees, and the second block shows when the data of account 175 changes (27 -> 45). Only need to store some of the data related to this account, and the data in the old block can still be accessed normally. (This is somewhat similar to the implementation of an immutable data structure in a functional programming language.) The detailed structure is  
-![image](picture/trie_4.png)
-Detailed structure is  
 ![world state trie](picture/worldstatetrie.png)
 
-## Yellow Book(Appendix D. Modified Merkle Patricia Tree)
+- **(Leaf)** : 리프노드는 두 개의 필드를 가지고 하나는 키 값이고, 두 번째 필드는 값이다.
+- **(Extention)** : Extention 노드도 두개의 필드를 가지고 있는데 하나는 패트리샤 트리 처럼 공통 prefix를 압축해서 저장하는 키 값이며, 하나는 자식 노드로 향하는 포인터이다.
+- **(Branch):** 브랜치는 17개의 필드를 가지고 있다. 앞 16개의 필드는 각각 16진수의 0~f 까지의 키 값에 해당하는 포인터이고 17번째 필드는 이 노드에 값이 저장되는 경우 저장하는 값이다. 예를 들어 (abc, abd, ab)가 저장되어 있다면 c,d가 포인터를 가지며 17번째 필드의 값은 ab노드의 값이 된다.
 
-Formally, we assume that the input value J contains a collection of Key Value pairs (Key Value is a byte array):  
-![image](picture/trie_5.png)
+### (Hex-Prefix Encoding) - hexadecimal prefix encoding 
+Hex-Prefix Encdoing은 니블(4비트)를 바이트 배열에 효율적으로 저장하는 방식이다. 이더리움 계정 주소는 hex값으로 구성되어 있는데 hex 정보를 저장하는데는 니블만 있으면 충분하기 때문에 바이트 단위로 저장하면 정보 손실이 발생한다. 그래서 hex값을 저장하고 남은 4비트를 다른 방식으로 활용하거나 서로 합쳐서 2개의 hex값을 저장하는 인코딩 방식이다.
 
-When dealing with such a collection, we use the following identifiers to represent the Key and Value of the data (for any I in the J set, I0 represents Key and I1 represents Value)  
-
-![image](picture/trie_6.png)
-
-For any particular byte, we can represent it as the corresponding nibble (nibble), where the Y set is specified in Hex-Prefix Encoding, meaning a nibble (4bit) set (the reason for using nibbles, Corresponding to the branch node structure of the branch node and the encoding flag in the key)  
-
-![image](picture/trie_7.png)
-
-We define the TRIE function to represent the HASH value of the root of the tree (where the second parameter of the c function is the number of layers of the tree after the build is completed. The value of root is 0)  
-
-![image](picture/trie_8.png)
-
-We also define a function n, the node function of this trie. When composing nodes, we use RLP to encode the structure. As a means of reducing storage complexity, for nodes with RLP less than 32 bytes, we store their RLP values ​​directly, and for those larger, we store their HASH nodes. We use c to define the node composition function:  
-
-![image](picture/trie_9.png)
-
-In a manner similar to a radix tree, a single key-value pair can be constructed when the Trie tree traverses from root to leaf. Key acquires a single nibble from each branch node (like the radix tree) by traversal accumulation. Unlike a radix tree, in the case of multiple Keys sharing the same prefix, or in the case of a single Key with a unique suffix, two optimization nodes are provided. In the case of a single key with a unique suffix, two optimization nodes are provided. Therefore, when traversing, it is possible to potentially acquire multiple nibbles from each of the other two node types, extensions, and leaves. There are three types of nodes in the Trie tree:  
-
-- **(Leaf):** The leaf node contains two fields. The first field is the nibble encoding of the remaining Key, and the second parameter of the nibble encoding method is true. The second field is Value.  
-- **(Extention):** The extension node also contains two fields. The first field is the nibble code of the part of the remaining Key that can be shared by at least two remaining nodes. The second field is n(J, j)  
-- **(Branch):** branch node contains 17 fields whose first 16 items correspond to each of the sixteen possible nibble values ​​of the keys in which they are traversed. The 17th field stores the nodes that have ended at the current node (for example, there are three keys, respectively (abc, abd, ab). The 17th field stores the value of the ab node)  
-
-Branch nodes are only used when needed. For a Trie tree with only one non-null key value pair, there may be no branch nodes. If you use a formula to define these three nodes, the formula is as follows: The HP function in the figure represents Hex-Prefix Encoding, which is a nibble encoding format, and RLP is a function that uses RLP for serialization.  
-
-![image](picture/trie_10.png)
-
-Explanation of the three cases in the above figure
-
-- If there is only one piece of data left in the KV set that needs to be encoded, then the data is encoded according to the first rule.
-- If the currently required KV set has a common prefix, then the largest common prefix is ​​extracted and processed using the second rule.
-- If it is not the above two cases, then use the branch node for set splitting, because the key is encoded using HP, so the possible branch is only 16 branches of 0-15. It can be seen that the value of u is recursively defined by n, and if a node is just finished here, then the 17th element v is prepared for this case.
-
-For how data should be stored and how it should not be stored, the Yellow Book describes the definitions that are not shown. So this is an implementation issue. We simply define a function to map J to a hash. We believe that for any J, there is only one hash value.
-
-
-
-### Yellow Book (Hex-Prefix Encoding) - hexadecimal prefix encoding 
-Hexadecimal prefix encoding is an efficient way to encode any number of nibbles into a byte array. It is capable of storing additional flags that, when used in the Trie tree (the only place that will be used), will disambiguate between node types.
-
-It is defined as a function HP that maps from a series of nibbles (represented by the set Y) to a sequence of bytes (represented by set B) along with a Boolean value:  
-
-![image](picture/hp_1.png)
-
-Therefore, the upper nibble of the first byte contains two flags; the lowest bit encodes the length of the parity bit, and the second lowest bit encodes the value of the flag. In the case of an even number of nibbles, the lower nibble of the first byte is zero, and in the case of an odd number, the first nibble. All remaining nibbles (now even) are suitable for the remaining bytes.
+엄밀한 정의가 보고싶다면 이더리움 Yello Paper를 참고하면 된다.
 
 ## Source implementation  
 ### trie/encoding.go
-Encoding.go mainly deals with the work of converting the three encoding formats in the trie tree. The three encoding formats are the following three encoding formats.
+`encoding.go`파일은 트라이 트리에서 사용하는 3개의 인코딩 방식을 구현한다. 
 
-- The encoding format of **KEYBYTES encoding** is the native key byte array. Most Trie APIs use this encoding format.  
-- **HEX encoding** This encoding format contains one nibble of Key and the end is followed by an optional 'terminal', which means whether the node is a leaf node or an extension node. This node is used when the node is loaded into memory because of its convenient access.  
-- The encoding format of **COMPACT encoding** is the Hex-Prefix Encoding mentioned in the above Yellow Book. This encoding format can be regarded as another version of the encoding format *HEX encoding**, which can save disk when stored in the database. space.  
+- **KEYBYTES encoding** : 두개의 nibble을 하나의 바이트로 합치는 방식이다. 두개의 hex값이 있다면 `bytes[ni+1] << 4 | bytes[ni+2]` 수식으로 8비트로 합쳐서 저장할 수 있다. 
+- **HEX encoding** : 앞에 첫 4비트에는 키값을 저장하고 나머지 4비트에는 이곳이 마지막 노드이며 값을 가지고 있다는 플래그인 `0x10` 정보를 저장한다. 이 플래그를 `terminator`라고 부른다.
+- **COMPACT encoding** : MPT에서 각 노드의 키값을 압축할 때 사용하는 인코딩 방식이다. 첫 번째 바이트는 메타 정보를 기록한다. 
+    * 첫번째 바이트 : 앞 4비트는 이게 leaf, extention, branch인지 플래그를 저장하고 뒤에 4비트에서 마지막 비트는 저장할 키가 홀수인지 짝수인지, 마지막에서 두번째 비트는 해당 노드가 값을 가지고 있는지 저장한다. `0100 0011`를 저장한다고 하면 키값이 짝수이며, 노드가 값을 가지고 있고 0100 타입의 노드라는 의미
+    * 나머지 바이트에 키값이 저장된다. 홀수인 경우 마지막에 1111 비트를 붙인다.
 
-Simply understood as: encode the ordinary byte sequence keybytes into keybytes with t flag and odd nibble nibble flag bits.
-
-
-- keybytes is the normal information stored in full bytes (8bit)
-- Hex is a format for storing information in nibble (4 bits). For compact use
-- In order to facilitate the key of the node of the Modified Merkle Patricia Tree in the Yellow Book, the code is hex format with the length of the even number of bytes. Its first nibble nibble will store the t flag and the odd flag from high to low in the lower 2 bits. The key bytes encoded by compact are easy to store when the t mark of the hex is added and the nibble of the nibble is even (ie, the complete byte).
-
-The code implementation mainly implements the mutual conversion of these three codes and a method of obtaining a common prefix.
-
+코드 구현체는 인코딩/디코딩 함수를 모두 구현한다.
 
 ```go
 func hexToCompact(hex []byte) []byte {
@@ -208,7 +145,7 @@ func hasTerm(s []byte) bool {
 }
 ```
 
-### data structure  
+### 데이터 구조
 The structure of node, you can see that node is divided into 4 types, fullNode corresponds to the branch node in the Yellow Book, shortNode corresponds to the extension node and leaf node in the Yellow Book (by the type of shortNode.Val to correspond to the leaf node (valueNode) Or branch node (fullNode)
 
 ```go
