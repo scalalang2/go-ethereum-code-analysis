@@ -59,8 +59,8 @@ Hex-Prefix Encdoing은 니블(4비트)를 바이트 배열에 효율적으로 �
 - **KEYBYTES encoding** : 두개의 nibble을 하나의 바이트로 합치는 방식이다. 두개의 hex값이 있다면 `bytes[ni+1] << 4 | bytes[ni+2]` 수식으로 8비트로 합쳐서 저장할 수 있다. 
 - **HEX encoding** : 앞에 첫 4비트에는 키값을 저장하고 나머지 4비트에는 이곳이 마지막 노드이며 값을 가지고 있다는 플래그인 `0x10` 정보를 저장한다. 이 플래그를 `terminator`라고 부른다.
 - **COMPACT encoding** : MPT에서 각 노드의 키값을 압축할 때 사용하는 인코딩 방식이다. 첫 번째 바이트는 메타 정보를 기록한다. 
-    * 첫번째 바이트 : 앞 4비트는 이게 leaf, extention, branch인지 플래그를 저장하고 뒤에 4비트에서 마지막 비트는 저장할 키가 홀수인지 짝수인지, 마지막에서 두번째 비트는 해당 노드가 값을 가지고 있는지 저장한다. `0100 0011`를 저장한다고 하면 키값이 짝수이며, 노드가 값을 가지고 있고 0100 타입의 노드라는 의미
-    * 나머지 바이트에 키값이 저장된다. 홀수인 경우 마지막에 1111 비트를 붙인다.
+    * 첫번째 바이트 : 앞 4비트는 플래그를 저장하고 뒤에 4비트에서 마지막 비트는 저장할 키가 홀수인지 짝수인지, 마지막에서 두번째 비트는 해당 노드가 값을 가지고 있는지 저장한다. 
+    * 나머지 바이트에는 키값을 HEX encoding 해서 저장한다.
 
 코드 구현체는 인코딩/디코딩 함수를 모두 구현한다.
 
@@ -146,13 +146,15 @@ func hasTerm(s []byte) bool {
 ```
 
 ### 데이터 구조
-The structure of node, you can see that node is divided into 4 types, fullNode corresponds to the branch node in the Yellow Book, shortNode corresponds to the extension node and leaf node in the Yellow Book (by the type of shortNode.Val to correspond to the leaf node (valueNode) Or branch node (fullNode)
+노드 구조체는 총 4개가 정의되어 있다. fullNode는 브랜치 노드에 해당하고 shortNode는 extention 노드를, valueNode는 리프노드를 의미한다. `fullNode`, `shortNode`가 포함하고 있는 구조체중 node에서 hashNode가 캐시에 포함되는 것을 볼 수 있는데 이는 해당 노드의 해시 값을 의미한다. 머클 패트리샤 트리이기 때문에 각 노드는 중간 해시 정보를 가지고 있다.
+
+Go언어의 덕 타이핑 문법 때문에, 이 인터페이스만 보고서는 모르지만 fullNode, shortNode, hashNode, valueNode 모두 node 인터페이스를 구현한 구현체이다.
 
 ```go
+// trie/node.go
 type node interface {
 	fstring(string) string
 	cache() (hashNode, bool)
-	canUnload(cachegen, cachelimit uint16) bool
 }
 
 type (
@@ -166,11 +168,11 @@ type (
 		flags nodeFlag
 	}
 	hashNode  []byte
-	valueNode []byte // if < 32 bytes then store as valueNode
+	valueNode []byte
 )
 ```
 
-The structure of trie, root contains the current root node, db is the back-end KV storage, the structure of trie is finally stored in the form of KV to the database, and then need to be loaded from the database when starting. originalRoot starts the hash value when loading, and the hash value can be used to recover the entire trie tree in the database. The cachegen field indicates the cache age of the current Trie tree. Each time the Commit operation is invoked, the cache age of the Trie tree is increased. The cache era will be attached to the node node. If the current cache age - cachelimit parameter is greater than the node cache age, node will be uninstalled from the cache to save memory. In fact, this is the cache update LRU algorithm, if a cache is not used for a long time, then it is removed from the cache to save memory space.
+트라이 구조체에서, root는 최상위 루트를 포함하고 있고 db는 KV 저장소 객체이다. 전체 트라이는 항상 KV 데이터베이스에 저장되며, 필요시에 데이터베이스에서 트리 정보를 조회해서 메모리에 로드한다.
 
 
 ```go
@@ -180,28 +182,27 @@ The structure of trie, root contains the current root node, db is the back-end K
 //
 // Trie is not safe for concurrent use.
 type Trie struct {
-	root         node
-	db           Database
-	originalRoot common.Hash
-
-	// Cache generation values.
-	// cachegen increases by one with each commit operation.
-	// new nodes are tagged with the current generation and unloaded
-	// when their generation is older than than cachegen-cachelimit.
-	cachegen, cachelimit uint16
+	db   *Database
+	root node
+	// Keep track of the number leafs which have been inserted since the last
+	// hashing operation. This number will not directly map to the number of
+	// actually unhashed nodes
+	unhashed int
 }
 ```
 
 ### Insert, find and delete Trie trees  
-The initialization of the Trie tree calls the New function. The function accepts a hash value and a Database parameter. If the hash value is not null, it means that an existing Trie tree is loaded from the database, and the trea.resolveHash method is called to load the whole Trie tree, this method will be introduced later. If root is empty, then create a new Trie tree to return.  
+트라이는 New 함수에 의해 초기화 된다. 해시값을 첫번째, 데이터베이스 객체를 두번째 필드로 입력받는다. 만약 해시값이 null이 아니라면 데이터베이스에서 조회해서 로드하고, 아니라면 비어있는 새로운 트라이를 생성한다.
 
 ```go
-func New(root common.Hash, db Database) (*Trie, error) {
-	trie := &Trie{db: db, originalRoot: root}
-	if (root != common.Hash{}) && root != emptyRoot {
-		if db == nil {
-			panic("trie.New: cannot use existing root without a database")
-		}
+func New(root common.Hash, db *Database) (*Trie, error) {
+	if db == nil {
+		panic("trie.New called without a database")
+	}
+	trie := &Trie{
+		db: db,
+	}
+	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
 		if err != nil {
 			return nil, err
@@ -210,19 +211,14 @@ func New(root common.Hash, db Database) (*Trie, error) {
 	}
 	return trie, nil
 }
+
 ```
 
-The insertion of the Trie tree, this is a recursive call method, starting from the root node, looking down until you find the point you can insert and insert. The parameter node is the currently inserted node, the prefix is ​​the part of the key that has been processed so far, and the key is the part of the key that has not been processed yet, the complete key = prefix + key. Value is the value that needs to be inserted. The return value bool is whether the operation changes the Trie tree (dirty), node is the root node of the subtree after the insertion is completed, and error is an error message.
-
-- If the node type is nil (the node of a brand new Trie tree is nil), the whole tree is empty at this time, directly return shortNode{key, value, t.newFlag()}, this time the whole tree is followed. It contains a shortNode node.
-- If the current root node type is shortNode (that is, the leaf node), first calculate the common prefix. If the common prefix is ​​equal to the key, then the two keys are the same. If the value is the same (dirty == false), then Return an error. Update the value of shortNode and return if there are no errors. If the common prefix does not match exactly, then the common prefix needs to be extracted to form a separate node (extended node), the extended node is connected to a branch node, and the branch node is connected to the two short nodes. First build a branch node (branch := &fullNode{flags: t.newFlag()}), and then call the t.insert of the branch node's Children location to insert the remaining two short nodes. There is a small detail here, the key encoding is HEX encoding, and there is a terminal at the end. Considering that the key of our root node is abc0x16, the key of the node we inserted is ab0x16. The following branch.Children[key[matchlen]] will work fine, 0x16 just points to the 17th child of the branch node. If the length of the match is 0, then the branch node is returned directly, otherwise the shortNode node is returned as the prefix node.
-- If the current node is a fullNode (that is, a branch node), then the insert method is directly called to the corresponding child node, and then the corresponding child node only wants the newly generated node.
-- If the current node is a hashNode, the hashNode means that the current node has not been loaded into the memory, or is stored in the database, then first call t.resolveHash(n, prefix) to load into the memory, and then call insert on the loaded node. Method to insert.
-
-
-Insert code
+`insert` 함수는 트라이에 노드를 추가하는 함수이다. 루트 노드에서 부터 시작하는 재귀함수이기 때문에 맨 처음에 종료 조건으로 더 이상 key값이 없으면 값을 그대로 리턴한다. 함수 파라미터 `node`는 현재 삽입된 노드이다. `prefix bytes[]`는 현재까지 읽어들인 문자열이고 `key bytes[]`는 아직 처리하지 못한 문자열이다. 마지막으로 `value`는 추가해야하는 값을 의미한다. 리턴값 첫 번째는 trie를 변경시켰는지 여부이고 두번 째 node는 삽입이 완료되고 나서 서브 트리의 루트를 말한다. 마지막은 에러를 나타낸다.
 
 ```go
+// trie/trie.go
+
 func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error) {
 	if len(key) == 0 {
 		if v, ok := n.(valueNode); ok {
@@ -293,6 +289,81 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 }
 ```
 
+`node`의 타입이 nil인 경우 전체 트리가 존재하지 않는다. 그래서 shortNode{key, value, t.newFlag()}를 즉시 리턴한다.
+
+만약 현재 루트 노드가 `shortNode`라면, 먼저 전체 키과 현재 키가 동일한 부분인 matchlen을 찾는다. 만약 키가 동일하다면 현재 `shortNode`를 그대로 두고 값만 변경한다.
+
+```go
+matchlen := prefixLen(key, n.Key)
+// If the whole key matches, keep this short node as is
+// and only update the value.
+if matchlen == len(n.Key) {
+    dirty, nn, err := t.insert(n.Val, append(prefix, key[:matchlen]...), key[matchlen:], value)
+    if !dirty || err != nil {
+        return false, n, err
+    }
+    return true, &shortNode{n.Key, nn, t.newFlag()}, nil
+}
+```
+
+키가 완벽하게 동일한 경우가 아니라면 브랜치 노드를 하나 만들어서 확장한다. 현재 `shortNode`밑으로 확장한다. 단, 첫글자만 동일한 경우에는 현재 노드를 브랜치 노드로 변경한다.
+
+```go
+// Otherwise branch out at the index where they differ.
+branch := &fullNode{flags: t.newFlag()}
+var err error
+
+// 기존 노드의 키값 중 동일한 부분을 자른 나머지 부분
+_, branch.Children[n.Key[matchlen]], err = t.insert(nil, append(prefix, n.Key[:matchlen+1]...), n.Key[matchlen+1:], n.Val)
+if err != nil {
+    return false, nil, err
+}
+
+// 삽입하려는 노드의 키값 중 동일한 부분을 자른 나머지 부분
+_, branch.Children[key[matchlen]], err = t.insert(nil, append(prefix, key[:matchlen+1]...), key[matchlen+1:], value)
+if err != nil {
+    return false, nil, err
+}
+
+// 만약 첫 글자만 동일한 경우라면, 이 노드를 브랜치로 변경한다.
+if matchlen == 0 {
+    return true, branch, nil
+}
+// Otherwise, replace it with a short node leading up to the branch.
+return true, &shortNode{key[:matchlen], branch, t.newFlag()}, nil
+```
+
+현재 노드가 `fullNode (a branch node)`라면, 첫글자 이후에 해당하는 키로만 노드를 하나 만들고 `Children[key[0]]`에 추가한다.
+
+```go
+case *fullNode:
+    dirty, nn, err := t.insert(n.Children[key[0]], append(prefix, key[0]), key[1:], value)
+    if !dirty || err != nil {
+        return false, n, err
+    }
+    n = n.copy()
+    n.flags = t.newFlag()
+    n.Children[key[0]] = nn
+    return true, n, nil
+```
+
+`hashNode`는 아직 데이터베이스에서 로드되지 않은 상태를 의미한다. 만약 현재 노드가 hashNode라면 데이터베이스에서 `prefix`를 Key값에 해당하는 노드를 찾은 다음 해당 노드에 추가한다. Trie 객체에 등록된 데이터베이스는 Key/Value 데이터베이스이고 트리의 상위 노드부터 자식까지 모든 노드가 KV 저장소에 저장됨에 유의하자.
+
+```go
+case hashNode:
+    // We've hit a part of the trie that isn't loaded yet. Load
+    // the node and insert into it. This leaves all child nodes on
+    // the path to the value in the trie.
+    rn, err := t.resolveHash(n, prefix)
+    if err != nil {
+        return false, nil, err
+    }
+    dirty, nn, err := t.insert(rn, prefix, key, value)
+    if !dirty || err != nil {
+        return false, rn, err
+    }
+    return true, nn, nil
+```
 
 The Get method of the Trie tree basically simply traverses the Trie tree to get the Key information.
 
