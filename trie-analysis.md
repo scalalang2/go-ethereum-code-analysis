@@ -349,6 +349,8 @@ case *fullNode:
 
 `hashNode`는 아직 데이터베이스에서 로드되지 않은 상태를 의미한다. 만약 현재 노드가 hashNode라면 데이터베이스에서 `prefix`를 Key값에 해당하는 노드를 찾은 다음 해당 노드에 추가한다. Trie 객체에 등록된 데이터베이스는 Key/Value 데이터베이스이고 트리의 상위 노드부터 자식까지 모든 노드가 KV 저장소에 저장됨에 유의하자.
 
+`hashNode`에서 hash는 머클 트리 상에서 자식 노드의 해시를 계속 누적해서 계산한 값을 의미한다. 그래서 `trie/hasher.go`에서 트리를 순회하면서 해시하는 Hasher라는 인터페이스를 제공한다.
+
 ```go
 case hashNode:
     // We've hit a part of the trie that isn't loaded yet. Load
@@ -365,7 +367,7 @@ case hashNode:
     return true, nn, nil
 ```
 
-The Get method of the Trie tree basically simply traverses the Trie tree to get the Key information.
+`insert`함수를 이해했다면 Get 조회 함수를 이해하는 건 쉬워진다. 풀노드, 숏노드를 순회하면서 valueNode를 찾아서 리턴한다. 찾고자 하는게 `valueNode`이기 때문에 재귀함수의 종료 조건이 된다.
 
 ```go
 func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode node, didResolve bool, err error) {
@@ -383,14 +385,12 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode
 		if err == nil && didResolve {
 			n = n.copy()
 			n.Val = newnode
-			n.flags.gen = t.cachegen
 		}
 		return value, n, didResolve, err
 	case *fullNode:
 		value, newnode, didResolve, err = t.tryGet(n.Children[key[pos]], key, pos+1)
 		if err == nil && didResolve {
 			n = n.copy()
-			n.flags.gen = t.cachegen
 			n.Children[key[pos]] = newnode
 		}
 		return value, n, didResolve, err
@@ -407,418 +407,165 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode
 }
 ```
 
-The Delete method of the Trie tree is not introduced at the moment, and the code root insertion is similar.
+초기 이더리움에는 없었는데, 트라이 노드 중 인자 `key`에 해당하는 노드를 지우는 `Delete`함수가 추가되었다. 아직 깊게 보진 못했지만 뇌피셜로 생각해보자면 상태 트라이 크기를 줄이기 위한 pruning을 구현하기 위해 필요했던 것 같다.
 
+### 데이터베이스에 커밋하기
 
-
-### Trie trees serialization & deserialization  
-Serialization mainly refers to storing the data represented by the memory into the database. Deserialization refers to loading the Trie data in the database into the data represented by the memory. The purpose of serialization is mainly to facilitate storage, reduce storage size and so on. The purpose of deserialization is to load the stored data into memory, facilitating the insertion, query, modification, etc. of the Trie tree.  
-
-Trie's serialization mainly affects the Compat Encoding and RLP encoding formats introduced earlier. The serialized structure is described in detail in the Yellow Book.  
-
-![image](picture/trie_8.png)
-![image](picture/trie_9.png)
-![image](picture/trie_10.png)
-
-The use of the Trie tree has a more detailed reference in trie_test.go. Here I list a simple usage process. First create an empty Trie tree, then insert some data, and finally call the trie.Commit () method to serialize and get a hash value (root), which is the KEC (c (J, 0)) in the above figure or TRIE (J).
-
+커밋은 현재 트라이의 모든 노드와 해시 값을 데이터베이스에 저장하는 과정이다.
 
 ```go
-func TestInsert(t *testing.T) {
-	trie := newEmpty()
-	updateString(trie, "doe", "reindeer")
-	updateString(trie, "dog", "puppy")
-	updateString(trie, "do", "cat")
-	root, err := trie.Commit()
-}
-```
-
-Let's analyze the main process of Commit(). After a series of calls, the hash method of hasher.go is finally called.
-
-
-```go
-func (t *Trie) Commit() (root common.Hash, err error) {
+// Commit writes all nodes to the trie's memory database, tracking the internal
+// and external (for account tries) references.
+func (t *Trie) Commit(onleaf LeafCallback) (root common.Hash, err error) {
 	if t.db == nil {
-		panic("Commit called on trie with nil database")
+		panic("commit called on trie with nil database")
 	}
-	return t.CommitTo(t.db)
-}
-// CommitTo writes all nodes to the given database.
-// Nodes are stored with their sha3 hash as the key.
-//
-// Committing flushes nodes from memory. Subsequent Get calls will
-// load nodes from the trie's database. Calling code must ensure that
-// the changes made to db are written back to the trie's attached
-// database before using the trie.
-func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error) {
-	hash, cached, err := t.hashRoot(db)
-	if err != nil {
-		return (common.Hash{}), err
-	}
-	t.root = cached
-	t.cachegen++
-	return common.BytesToHash(hash.(hashNode)), nil
-}
-
-func (t *Trie) hashRoot(db DatabaseWriter) (node, node, error) {
 	if t.root == nil {
-		return hashNode(emptyRoot.Bytes()), nil, nil
+		return emptyRoot, nil
 	}
-	h := newHasher(t.cachegen, t.cachelimit)
-	defer returnHasherToPool(h)
-	return h.hash(t.root, db, true)
+	// Derive the hash for all dirty nodes first. We hold the assumption
+	// in the following procedure that all nodes are hashed.
+	rootHash := t.Hash()
+	h := newCommitter()
+	defer returnCommitterToPool(h)
+
+	// Do a quick check if we really need to commit, before we spin
+	// up goroutines. This can happen e.g. if we load a trie for reading storage
+	// values, but don't write to it.
+	if _, dirty := t.root.cache(); !dirty {
+		return rootHash, nil
+	}
+	var wg sync.WaitGroup
+	if onleaf != nil {
+		h.onleaf = onleaf
+		h.leafCh = make(chan *leaf, leafChanSize)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.commitLoop(t.db)
+		}()
+	}
+	var newRoot hashNode
+	newRoot, err = h.Commit(t.root, t.db)
+	if onleaf != nil {
+		// The leafch is created in newCommitter if there was an onleaf callback
+		// provided. The commitLoop only _reads_ from it, and the commit
+		// operation was the sole writer. Therefore, it's safe to close this
+		// channel here.
+		close(h.leafCh)
+		wg.Wait()
+	}
+	if err != nil {
+		return common.Hash{}, err
+	}
+	t.root = newRoot
+	return rootHash, nil
 }
 ```
 
-Below we briefly introduce the hash method, the hash method mainly does two operations. One is to retain the original tree structure, and use the cache variable, the other is to calculate the hash of the original tree structure and store the hash value in the cache variable.  
+먼저 데이터베이스에 커밋하기 전에 모든 노드에 걸쳐서 해시를 계산한다. 이 계산 로직은 `trie/hasher.go`파일에 저장되어 있으며, 트라이의 Hash()함수가 이를 호출하는 구조를 가지고 있다. `committer`객체는 실제 데이터베이스에 기록하는 책임을 가지는 객체이다.
 
-The main process of calculating the original hash value is to first call h.hashChildren(n, db) to find the hash values ​​of all the child nodes, and replace the original child nodes with the hash values ​​of the child nodes. This is a recursive call process that counts up from the leaves up to the root of the tree. Then call the store method to calculate the hash value of the current node, and put the hash value of the current node into the cache node, set the dirty parameter to false (the dirty value of the newly created node is true), and then return.  
-
-The return value indicates that the cache variable contains the original node node and contains the hash value of the node node. The hash variable returns the hash value of the current node (this value is actually calculated from all child nodes of node and node).  
-
-There is a small detail: when the root node calls the hash function, the force parameter is true, and the other child nodes call the force parameter to false. The purpose of the force parameter is to perform a hash calculation on c(J,i) when ||c(J,i)||<32, so that the root node is hashed anyway.  
-
-	
 ```go
-// hash collapses a node down into a hash node, also returning a copy of the
-// original node initialized with the computed hash to replace the original one.
-func (h *hasher) hash(n node, db DatabaseWriter, force bool) (node, node, error) {
-	// If we're not storing the node, just hashing, use available cached data
-	if hash, dirty := n.cache(); hash != nil {
-		if db == nil {
-			return hash, n, nil
-		}
-		if n.canUnload(h.cachegen, h.cachelimit) {
-			// Unload the node from cache. All of its subnodes will have a lower or equal
-			// cache generation number.
-			cacheUnloadCounter.Inc(1)
-			return hash, hash, nil
-		}
-		if !dirty {
-			return hash, n, nil
-		}
-	}
-	// Trie not processed yet or needs storage, walk the children
-	collapsed, cached, err := h.hashChildren(n, db)
-	if err != nil {
-		return hashNode{}, n, err
-	}
-	hashed, err := h.store(collapsed, db, force)
-	if err != nil {
-		return hashNode{}, n, err
-	}
-	// Cache the hash of the node for later reuse and remove
-	// the dirty flag in commit mode. It's fine to assign these values directly
-	// without copying the node first because hashChildren copies it.
-	cachedHash, _ := hashed.(hashNode)
-	switch cn := cached.(type) {
-	case *shortNode:
-		cn.flags.hash = cachedHash
-		if db != nil {
-			cn.flags.dirty = false
-		}
-	case *fullNode:
-		cn.flags.hash = cachedHash
-		if db != nil {
-			cn.flags.dirty = false
-		}
-	}
-	return hashed, cached, nil
+// Derive the hash for all dirty nodes first. We hold the assumption
+// in the following procedure that all nodes are hashed.
+rootHash := t.Hash()
+h := newCommitter()
+defer returnCommitterToPool(h)
+```
+
+만약 루트 캐시에서 변경된 내용이 없으면, 데이터베이스에 기록할 필요가 없으므로 루트 해시를 그대로 리턴한다.
+
+반대의 경우에는 커밋을 실행하는데, 이 때 리프노드를 데이터베이스에 저장하는 건 병렬로 처리할 수 있으므로 고루틴으로 별도 처리한다. 함수가 조기 종료되는 것을 막기 위해 `WaitGroup`으로 고루틴을 블럭킹 하고 있다.
+```go
+if _, dirty := t.root.cache(); !dirty {
+    return rootHash, nil
+}
+var wg sync.WaitGroup
+if onleaf != nil {
+    h.onleaf = onleaf
+    h.leafCh = make(chan *leaf, leafChanSize)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        h.commitLoop(t.db)
+    }()
 }
 ```
 
-The hashChildren method, which replaces all child nodes with their hashes. You can see that the cache variable takes over the complete structure of the original Trie tree, and the collapsed variable replaces the child nodes with the hash values ​​of the child nodes.
+Commit 함수를 통해 실제 데이터베이스에 기록하는 커밋을 수행한다. `Commit`함수 내부에서는 트리를 순회하면서 모든 노드를 DB에 커밋한다. 
 
-- If the current node is a shortNode, first replace the collapsed.Key from Hex Encoding to Compact Encoding, and then recursively call the hash method to calculate the child node's hash and cache, thus replacing the child node with the child node's hash value.
-- If the current node is a fullNode, then traverse each child node and replace the child node with the hash value of the child node.
-- Otherwise this node has no children. Return directly.
-
-Code
+이더리움에서 MPT는 굉장히 무거운 자료구조이다. 최대 개수가 `2^64`개 이기 때문에 메모리에 없는 서브 트리는 굳이 순회하지 않는 다던가 메모리에 변경사항이 없는 노드는 스킵하는 등 몇 가지 최적화 방법이 적용되어 있다.
 
 ```go
-// hashChildren replaces the children of a node with their hashes if the encoded
-// size of the child is larger than a hash, returning the collapsed node as well
-// as a replacement for the original node with the child hashes cached in.
-func (h *hasher) hashChildren(original node, db DatabaseWriter) (node, node, error) {
-	var err error
+newRoot, err = h.Commit(t.root, t.db)
+if onleaf != nil {
+    // The leafch is created in newCommitter if there was an onleaf callback
+    // provided. The commitLoop only _reads_ from it, and the commit
+    // operation was the sole writer. Therefore, it's safe to close this
+    // channel here.
+    close(h.leafCh)
+    wg.Wait()
+}
+if err != nil {
+    return common.Hash{}, err
+}
+t.root = newRoot
+return rootHash, nil
+```
+```go
+// trie/committer.go
 
-	switch n := original.(type) {
+// commit collapses a node down into a hash node and inserts it into the database
+func (c *committer) commit(n node, db *Database) (node, error) {
+	// 변경 내용이 없으면 스킵한다.
+	hash, dirty := n.cache()
+	if hash != nil && !dirty {
+		return hash, nil
+	}
+
+	// 커밋하고 더티 플래그를 제거한다.
+	switch cn := n.(type) {
 	case *shortNode:
-		// Hash the short node's child, caching the newly hashed subtree
-		collapsed, cached := n.copy(), n.copy()
-		collapsed.Key = hexToCompact(n.Key)
-		cached.Key = common.CopyBytes(n.Key)
+		// Commit child
+		collapsed := cn.copy()
 
-		if _, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, cached.Val, err = h.hash(n.Val, db, false)
+		// If the child is fullnode, recursively commit.
+		// Otherwise it can only be hashNode or valueNode.
+		if _, ok := cn.Val.(*fullNode); ok {
+			childV, err := c.commit(cn.Val, db)
 			if err != nil {
-				return original, original, err
+				return nil, err
 			}
+			collapsed.Val = childV
 		}
-		if collapsed.Val == nil {
-			collapsed.Val = valueNode(nil) // Ensure that nil children are encoded as empty strings.
-		}
-		return collapsed, cached, nil
 
+		// Compact 인코딩을 수행한 뒤 저장한다.
+		collapsed.Key = hexToCompact(cn.Key)
+		hashedNode := c.store(collapsed, db)
+		if hn, ok := hashedNode.(hashNode); ok {
+			return hn, nil
+		}
+		return collapsed, nil
 	case *fullNode:
-		// Hash the full node's children, caching the newly hashed subtrees
-		collapsed, cached := n.copy(), n.copy()
-
-		for i := 0; i < 16; i++ {
-			if n.Children[i] != nil {
-				collapsed.Children[i], cached.Children[i], err = h.hash(n.Children[i], db, false)
-				if err != nil {
-					return original, original, err
-				}
-			} else {
-				collapsed.Children[i] = valueNode(nil) // Ensure that nil children are encoded as empty strings.
-			}
-		}
-		cached.Children[16] = n.Children[16]
-		if collapsed.Children[16] == nil {
-			collapsed.Children[16] = valueNode(nil)
-		}
-		return collapsed, cached, nil
-
-	default:
-		// Value and hash nodes don't have children so they're left as were
-		return n, original, nil
-	}
-}
-```
-
-Store method, if all the child nodes of a node are replaced with the hash value of the child node, then directly call the rlp.Encode method to encode the node. If the encoded value is less than 32, and the node is not the root node, then Store them directly in their parent node, otherwise call the h.sha.Write method to perform the hash calculation, then store the hash value and the encoded data in the database, and then return the hash value.  
-
-You can see that the value of each node with a value greater than 32 and the hash are stored in the database.
-
-```go
-func (h *hasher) store(n node, db DatabaseWriter, force bool) (node, error) {
-	// Don't store hashes or empty nodes.
-	if _, isHash := n.(hashNode); n == nil || isHash {
-		return n, nil
-	}
-	// Generate the RLP encoding of the node
-	h.tmp.Reset()
-	if err := rlp.Encode(h.tmp, n); err != nil {
-		panic("encode error: " + err.Error())
-	}
-
-	if h.tmp.Len() < 32 && !force {
-		return n, nil // Nodes smaller than 32 bytes are stored inside their parent
-	}
-	// Larger nodes are replaced by their hash and stored in the database.
-	hash, _ := n.cache()
-	if hash == nil {
-		h.sha.Reset()
-		h.sha.Write(h.tmp.Bytes())
-		hash = hashNode(h.sha.Sum(nil))
-	}
-	if db != nil {
-		return hash, db.Put(hash, h.tmp.Bytes())
-	}
-	return hash, nil
-}
-```
-
-Trie's deserialization process. Remember the process of creating a Trie tree before. If the parameter root's hash value is not empty, then the rootnode, err := trie.resolveHash(root[:], nil) method is called to get the rootnode node. First, the RLP encoded content of the node is obtained from the database through the hash value. Then call decodeNode to parse the content.
-
-```go
-func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	cacheMissCounter.Inc(1)
-
-	enc, err := t.db.Get(n)
-	if err != nil || enc == nil {
-		return nil, &MissingNodeError{NodeHash: common.BytesToHash(n), Path: prefix}
-	}
-	dec := mustDecodeNode(n, enc, t.cachegen)
-	return dec, nil
-}
-func mustDecodeNode(hash, buf []byte, cachegen uint16) node {
-	n, err := decodeNode(hash, buf, cachegen)
-	if err != nil {
-		panic(fmt.Sprintf("node %x: %v", hash, err))
-	}
-	return n
-}
-```
-
-The decodeNode method, this method determines the node to which the encoding belongs according to the length of the list of the rlp. If it is 2 fields, it is the shortNode node. If it is 17 fields, it is fullNode, and then calls the respective analytic functions.
-
-```go
-// decodeNode parses the RLP encoding of a trie node.
-func decodeNode(hash, buf []byte, cachegen uint16) (node, error) {
-	if len(buf) == 0 {
-		return nil, io.ErrUnexpectedEOF
-	}
-	elems, _, err := rlp.SplitList(buf)
-	if err != nil {
-		return nil, fmt.Errorf("decode error: %v", err)
-	}
-	switch c, _ := rlp.CountValues(elems); c {
-	case 2:
-		n, err := decodeShort(hash, buf, elems, cachegen)
-		return n, wrapError(err, "short")
-	case 17:
-		n, err := decodeFull(hash, buf, elems, cachegen)
-		return n, wrapError(err, "full")
-	default:
-		return nil, fmt.Errorf("invalid number of list elements: %v", c)
-	}
-}
-```
-
-The decodeShort method determines whether a leaf node or an intermediate node is determined by whether the key has a terminal symbol. If there is a terminal, then the leaf node, parse out val through the SplitString method and generate a shortNode. However, there is no terminator, then the description is the extension node, the remaining nodes are resolved by decodeRef, and then a shortNode is generated.
-
-
-```go
-func decodeShort(hash, buf, elems []byte, cachegen uint16) (node, error) {
-	kbuf, rest, err := rlp.SplitString(elems)
-	if err != nil {
-		return nil, err
-	}
-	flag := nodeFlag{hash: hash, gen: cachegen}
-	key := compactToHex(kbuf)
-	if hasTerm(key) {
-		// value node
-		val, _, err := rlp.SplitString(rest)
+		hashedKids, err := c.commitChildren(cn, db)
 		if err != nil {
-			return nil, fmt.Errorf("invalid value node: %v", err)
+			return nil, err
 		}
-		return &shortNode{key, append(valueNode{}, val...), flag}, nil
-	}
-	r, _, err := decodeRef(rest, cachegen)
-	if err != nil {
-		return nil, wrapError(err, "val")
-	}
-	return &shortNode{key, r, flag}, nil
-}
-```
+		collapsed := cn.copy()
+		collapsed.Children = hashedKids
 
-The decodeRef method parses according to the data type. If the type is list, then it may be the value of the content <32, then call decodeNode to parse. If it is an empty node, it returns null. If it is a hash value, construct a hashNode to return. Note that there is no further analysis here. If you need to continue parsing the hashNode, you need to continue to call the resolveHash method. The call to the decodeShort method is complete.
-
-
-```go
-func decodeRef(buf []byte, cachegen uint16) (node, []byte, error) {
-	kind, val, rest, err := rlp.Split(buf)
-	if err != nil {
-		return nil, buf, err
-	}
-	switch {
-	case kind == rlp.List:
-		// 'embedded' node reference. The encoding must be smaller
-		// than a hash in order to be valid.
-		if size := len(buf) - len(rest); size > hashLen {
-			err := fmt.Errorf("oversized embedded node (size is %d bytes, want size < %d)", size, hashLen)
-			return nil, buf, err
+		hashedNode := c.store(collapsed, db)
+		if hn, ok := hashedNode.(hashNode); ok {
+			return hn, nil
 		}
-		n, err := decodeNode(nil, buf, cachegen)
-		return n, rest, err
-	case kind == rlp.String && len(val) == 0:
-		// empty node
-		return nil, rest, nil
-	case kind == rlp.String && len(val) == 32:
-		return append(hashNode{}, val...), rest, nil
+		return collapsed, nil
+	case hashNode:
+		return cn, nil
 	default:
-		return nil, nil, fmt.Errorf("invalid RLP string size %d (want 0 or 32)", len(val))
+		// nil, valuenode shouldn't be committed
+		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
 	}
 }
-```
-
-decodeFull method. The process of the root decodeShort method is similar.
-
-```go	
-func decodeFull(hash, buf, elems []byte, cachegen uint16) (*fullNode, error) {
-	n := &fullNode{flags: nodeFlag{hash: hash, gen: cachegen}}
-	for i := 0; i < 16; i++ {
-		cld, rest, err := decodeRef(elems, cachegen)
-		if err != nil {
-			return n, wrapError(err, fmt.Sprintf("[%d]", i))
-		}
-		n.Children[i], elems = cld, rest
-	}
-	val, _, err := rlp.SplitString(elems)
-	if err != nil {
-		return n, err
-	}
-	if len(val) > 0 {
-		n.Children[16] = append(valueNode{}, val...)
-	}
-	return n, nil
-}
-```
-
-### Trie tree cache management
-
-The cache management of the Trie tree. Remember that there are two parameters in the structure of the Trie tree, one is cachegen and the other is cachelimit. These two parameters are the parameters of the cache control. Each time the Trie tree calls the Commit method, it will cause the current cachegen to increase by 1.
-	
-```go
-func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error) {
-	hash, cached, err := t.hashRoot(db)
-	if err != nil {
-		return (common.Hash{}), err
-	}
-	t.root = cached
-	t.cachegen++
-	return common.BytesToHash(hash.(hashNode)), nil
-}
-```
-
-Then when the Trie tree is inserted, the current cachegen will be stored in the node.
-
-
-```go
-func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error) {
-			....
-			return true, &shortNode{n.Key, nn, t.newFlag()}, nil
-		}
-
-// newFlag returns the cache flag value for a newly created node.
-func (t *Trie) newFlag() nodeFlag {
-	return nodeFlag{dirty: true, gen: t.cachegen}
-}
-```
-
-If trie.cachegen - node.cachegen > cachelimit, you can unload the node from memory. That is to say, after several times of Commit, the node has not been modified, then the node is unloaded from the memory to save memory for other nodes.  
-
-The uninstall process is in our hasher.hash method, which is called at commit time. If the method's canUnload method call returns true, then the node is unloaded, its return value is observed, only the hash node is returned, and the node node is not returned, so the node is not referenced and will be cleared by gc soon. After the node is unloaded, a hashNode node is used to represent the node and its children. If you need to use it later, you can load this node into memory by method.
-
-
-```go
-func (h *hasher) hash(n node, db DatabaseWriter, force bool) (node, node, error) {
-	if hash, dirty := n.cache(); hash != nil {
-		if db == nil {
-			return hash, n, nil
-		}
-		if n.canUnload(h.cachegen, h.cachelimit) {
-			// Unload the node from cache. All of its subnodes will have a lower or equal
-			// cache generation number.
-			cacheUnloadCounter.Inc(1)
-			return hash, hash, nil
-		}
-		if !dirty {
-			return hash, n, nil
-		}
-	}
-}
-```
-
-The canUnload method is an interface, and different nodes call different methods.
-
-```go
-// canUnload tells whether a node can be unloaded.
-func (n *nodeFlag) canUnload(cachegen, cachelimit uint16) bool {
-	return !n.dirty && cachegen-n.gen >= cachelimit
-}
-
-func (n *fullNode) canUnload(gen, limit uint16) bool  { return n.flags.canUnload(gen, limit) }
-func (n *shortNode) canUnload(gen, limit uint16) bool { return n.flags.canUnload(gen, limit) }
-func (n hashNode) canUnload(uint16, uint16) bool      { return false }
-func (n valueNode) canUnload(uint16, uint16) bool     { return false }
-
-func (n *fullNode) cache() (hashNode, bool)  { return n.flags.hash, n.flags.dirty }
-func (n *shortNode) cache() (hashNode, bool) { return n.flags.hash, n.flags.dirty }
-func (n hashNode) cache() (hashNode, bool)   { return nil, true }
-func (n valueNode) cache() (hashNode, bool)  { return nil, true }
 ```
 
 ### Proof.go Merkel proof of the Trie tree
