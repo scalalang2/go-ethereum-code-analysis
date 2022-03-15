@@ -18,7 +18,7 @@ Yello Paper에 있는 복잡한 수식은 모두 제거하고
 
 - [이더리움 패키지 구조](/go-ethereum-code-analysis.md)
 - [RLP 인코딩 사용방법을 알아보자](/rlp-analysis.md)
-- [이더리움 핵심 자료구조 중 하나인 트라이와 핵심 코드 분석](/trie-analysis.md)
+- [머클 패트리샤트리 개요 및 핵심 코드 분석](/trie-analysis.md)
 - [ethdb analysis](/ethdb-analysis.md)
 - [rpc analysis](/rpc-analysis.md)
 - [p2p analysis](/p2p-analysis.md)
