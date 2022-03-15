@@ -19,9 +19,9 @@ Yello Paper에 있는 복잡한 수식은 모두 제거하고
 - [이더리움 패키지 구조](/go-ethereum-code-analysis.md)
 - [RLP 인코딩 사용방법을 알아보자](/rlp-analysis.md)
 - [머클 패트리샤트리 개요 및 핵심 코드 분석](/trie-analysis.md)
-- [ethdb analysis](/ethdb-analysis.md)
-- [rpc analysis](/rpc-analysis.md)
-- [p2p analysis](/p2p-analysis.md)
+- [블록체인이 사용하는 데이터베이스 | ethdb 패키지 분석](/ethdb-analysis.md)
+- [rpc 프로토콜 분석](/rpc-analysis.md)
+- [p2p 프로토콜 분석](/p2p-analysis.md)
 - [eth protocol analysis](/eth-analysis.md)
 - **코어 코드 분석**
   - [blockchain index, chain_indexer analysis](/core-chain_indexer-analysis.md)
