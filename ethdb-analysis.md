@@ -1,253 +1,286 @@
-All data of go-ethereum is stored in levelDB, the open source KeyValue file database of Google. All the data of the entire blockchain is stored in a levelDB database. LevelDB supports the function of splitting files according to file size, so we see The data of the blockchain is a small file. In fact, these small files are all the same levelDB instance. Here is a simple look at the levelDB's go package code.
+Go-ethereum의 모든 데이터는 구글에서 개발한 오픈소스 KV 데이터베이스인 LevelDB에 저장된다. 블록체인의 모든 정보는 LevelDB에 저장되는데, LevelDB는 파일 크기에 따라 파일을 쪼개서 저장한다. 그래서 우리가 블록체인의 데이터가 저장된 곳을 보면 여러개의 크기가 작은 파일이 존재하는데 전체가 하나의 LevelDB 인스턴스를 구성한다.
 
-LevelDB official website introduction features
+공식 웹 사이트에서 소개하는 LevelDB의 특징은 다음과 같다.
 
-**Features**：
+**특징**：
 
-- Both key and value are byte arrays of arbitrary length;
-- The entry (that is, a KV record) is stored by default in the lexicographic order of the key. Of course, the developer can also override the sort function.
-- Basic operation interface provided: Put(), Delete(), Get(), Batch();
-- Support batch operations with atomic operations;
-- You can create a snapshot of the data panorama and allow you to find the data in the snapshot;
-- You can traverse the data through a forward (or backward) iterator (the iterator implicitly creates a snapshot);
-- Automatically use Snappy to compress data;
-- portability;
+- 키와 밸류는 임의 길이의 바이트 배열이다.
+- KV 페어 쌍은 Key를 기준으로 사전순으로 저장된다.
+- Put(), Delete(), Get(), Batch()의 기본 기능을 제공한다.
+- Batch 연산의 아토믹 연산을 지원한다.
+- 데이터 스냅샷 기능을 지원한다.
+- iterator를 통한 데이터 탐색 기능 지원
+- 데이터 압축에 Snappy를 지원한다.
+- FileDB 이기 때문에 다른 환경으로 포팅이 쉽다.
 
-**Limitations**：
+**한계**：
 
-- Non-relational data model (NoSQL), does not support sql statement, does not support indexing;
-- Allow only one process to access a specific database at a time;
-- There is no built-in Client/Server architecture, but developers can use the LevelDB library to package a server themselves;
+- NOSQL 데이터 모델, 인덱싱 미지원, SQL 문법 미지원
+- 하나의 프로세스만이 데이터베이스 접근 가능하다.
+- Built-in 클라이언트/서버 아키텍처가 없다.
 
-The directory where the source code is located is in the ethereum/ethdb directory. The code is relatively simple, divided into the following three files
+`ethereum/ethdb` 패키지에 Key/Value 소스 코드가 저장되어 있다. 코드 자체는 상대적으로 쉽고 3개의 파일에 인터페이스가 저장되고 그 하위 패키지에 실제 구현부를 저장하는 식으로 구성되어 있다.
 
-- database.go levelDB package
-- memory_database.go Memory-based database for testing, not persisted as a file, only for testing
-- interface.go defines the interface of the database
-- database_test.go test case for golang
+- `database.go` : 데이터베이스 객체의 인터페이스
+- `iterator.go` : 데이터 순회 기능을 제공하는 인터페이스
+- `batch.go` : Batch 연산 기능을 제공하는 인터페이스
+- `ethdb/leveldb/` : LevelDB 구현체
+- `ethdb/memorydb/` : In-memory KV 저장소 구현체
 
-## interface.go
-
-Look at the following code, basically defines the basic operations of the KeyValue database, Put, Get, Has, Delete and other basic operations, levelDB does not support SQL, basically can be understood as the Map inside the data structure.
+## database.go
+아래 코드를 보면 Database 인터페이스 안에, 여러 인터페이스가 임베딩 되어 있는 상황인 것을 알 수 있다. 여기서 기본적인 연산을 하는 `Reader`와 `Writer`를 보면 다시 KeyValueReader와 KeyValueWriter를 임베딩 한 모습을 볼 수 있다.
 
 ```go
 package ethdb
-const IdealBatchSize = 100 * 1024
 
-// Putter wraps the database write operation supported by both batches and regular databases.
-type Putter interface {
-	Put(key []byte, value []byte) error
+type Reader interface {
+	KeyValueReader
+	AncientReader
 }
 
-// Database wraps all database operations. All methods are safe for concurrent use.
+type Writer interface {
+	KeyValueWriter
+	AncientWriter
+}
+
 type Database interface {
-	Putter
-	Get(key []byte) ([]byte, error)
-	Has(key []byte) (bool, error)
-	Delete(key []byte) error
-	Close()
-	NewBatch() Batch
-}
-
-// Batch is a write-only database that commits changes to its host database
-// when Write is called. Batch cannot be used concurrently.
-type Batch interface {
-	Putter
-	ValueSize() int // amount of data in the batch
-	Write() error
+	Reader
+	Writer
+	Batcher
+	Iteratee
+	Stater
+	Compacter
+	io.Closer
 }
 ```
 
-## memory_database.go
-
-This is basically a Map structure that encapsulates a memory. Then a lock is used to protect the resources of multiple threads.
+`KeyValueReader`와 `KeyValueWriter`에는 각각 Has, Get, Put, Delete 함수가 정의 되어 있다. 즉 Database 인터페이스를 구현하는 구조체는 위 4가지 함수를 제공해야 한다.
 
 ```go
-type MemDatabase struct {
+// KeyValueReader wraps the Has and Get method of a backing data store.
+type KeyValueReader interface {
+	// Has retrieves if a key is present in the key-value data store.
+	Has(key []byte) (bool, error)
+
+	// Get retrieves the given key if it's present in the key-value data store.
+	Get(key []byte) ([]byte, error)
+}
+
+// KeyValueWriter wraps the Put method of a backing data store.
+type KeyValueWriter interface {
+	// Put inserts the given value into the key-value data store.
+	Put(key []byte, value []byte) error
+
+	// Delete removes the key from the key-value data store.
+	Delete(key []byte) error
+}
+
+```
+
+## ethdb/memorydb/memorydb.go
+
+가장 기본이 되는 메모리 DB 부터 살펴보자, 사실 LevelDB자체는 오픈소스를 그대로 이용하고 있기 때문에 단순히 우리가 여기서 정의한 인터페이스대로 기능을 제공하는 것 밖에 없다.
+
+db 변수의 타입이 `map[string][]byte` 로 정의되어 있어서, string을 키로 가지고 []byte를 값으로 가지는 데이터 구조임을 알 수 있다. `lock`은 동시성을 해결하기 위한 락으로 사용된다.
+
+```go
+type Database struct {
 	db   map[string][]byte
 	lock sync.RWMutex
 }
 
-func NewMemDatabase() (*MemDatabase, error) {
-	return &MemDatabase{
-		db: make(map[string][]byte),
-	}, nil
-}
-
-func (db *MemDatabase) Put(key []byte, value []byte) error {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-	db.db[string(key)] = common.CopyBytes(value)
-	return nil
-}
-func (db *MemDatabase) Has(key []byte) (bool, error) {
+// key-value 에서 key를 가진 값이 있는지 검사한다.
+func (db *Database) Has(key []byte) (bool, error) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
+	if db.db == nil {
+		return false, errMemorydbClosed
+	}
 	_, ok := db.db[string(key)]
 	return ok, nil
 }
+
+// key가 존재한다면 값을 리턴한다.
+func (db *Database) Get(key []byte) ([]byte, error) {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	if db.db == nil {
+		return nil, errMemorydbClosed
+	}
+	if entry, ok := db.db[string(key)]; ok {
+		return common.CopyBytes(entry), nil
+	}
+	return nil, errMemorydbNotFound
+}
+
+// key를 가진 value를 저장한다.
+func (db *Database) Put(key []byte, value []byte) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.db == nil {
+		return errMemorydbClosed
+	}
+	db.db[string(key)] = common.CopyBytes(value)
+	return nil
+}
+
+// 해당 key를 삭제한다.
+func (db *Database) Delete(key []byte) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.db == nil {
+		return errMemorydbClosed
+	}
+	delete(db.db, string(key))
+	return nil
+}
 ```
 
-Then there is the operation of Batch. It is also relatively simple, and you can understand it at a glance.
+코드에는 배치 연산을 위한 구조체와 함수도 존재하며, 상당히 쉽게 구현되어 있다. Put 연산으로 요청 자체를 저장하고 있다가 Write 함수를 통해 db에 한꺼번에 쓴다.
 
 ```go
-type kv struct{ k, v []byte }
-type memBatch struct {
-	db     *MemDatabase
-	writes []kv
+type batch struct {
+	db     *Database
+	writes []keyvalue
 	size   int
 }
-func (b *memBatch) Put(key, value []byte) error {
-	b.writes = append(b.writes, kv{common.CopyBytes(key), common.CopyBytes(value)})
+
+func (b *batch) Put(key, value []byte) error {
+    // 메모리에만 정보를 가지고 있는다.
+	b.writes = append(b.writes, keyvalue{common.CopyBytes(key), common.CopyBytes(value), false})
 	b.size += len(value)
 	return nil
 }
-func (b *memBatch) Write() error {
+
+// 실제 db에 한꺼번에 저장한다.
+func (b *batch) Write() error {
 	b.db.lock.Lock()
 	defer b.db.lock.Unlock()
 
-	for _, kv := range b.writes {
-		b.db.db[string(kv.k)] = kv.v
+	for _, keyvalue := range b.writes {
+		if keyvalue.delete {
+			delete(b.db.db, string(keyvalue.key))
+			continue
+		}
+		b.db.db[string(keyvalue.key)] = keyvalue.value
 	}
 	return nil
 }
 ```
 
-## database.go
+## ethdb/leveldb/leveldb.go
 
-This is the code used by the actual ethereum client, which encapsulates the levelDB interface.
+아래 코드가 실제 이더리움 클라이언트에서 사용중인 코드이다. 실질적으로는 syndtr/goleveldb/leveldb의 구현부를 인터페이스를 통해 제공하는 정도로 구현되어 있다.
 
 ```go
+package leveldb
+
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	gometrics "github.com/rcrowley/go-metrics"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 ```
 
-The leveldb package of github.com/syndtr/goleveldb/leveldb is used, so some of the documentation used can be found there. It can be seen that the data structure mainly adds a lot of Mertrics to record the database usage, and adds some situations that quitChan uses to handle the stop time, which will be analyzed later. If the following code may be in doubt, it should be filtered again: filter.NewBloomFilter(10) This can be temporarily ignored. This is an option for performance optimization in levelDB, you can ignore it.
+Database 구조체를 보면 in-memory 보다 조금 많은 항목들이 등록되어 있다. 대 다수는 이더리움 성능에 크게 영향을 미치는 요소 중 하나인 leveldb의 성능을 측정하기 위한 Meter 값이 많이 들어가 있다.
 
 ```go
-type LDBDatabase struct {
-	fn string      // filename for reporting
-	db *leveldb.DB // LevelDB instance
+type Database struct {
+	fn string      // 파일명
+	db *leveldb.DB // 오픈소스 LevelDB의 인터페이스
 
-	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
-	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
-	...metrics
+	compTimeMeter      metrics.Meter 
+	compReadMeter      metrics.Meter 
 
-	quitLock sync.Mutex      // Mutex protecting the quit channel access
-	quitChan chan chan error // Quit channel to stop the metrics collection before closing the database
+	quitLock sync.Mutex      
+	quitChan chan chan error 
 
-	log log.Logger // Contextual logger tracking the database path
-}
-
-// NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
-	logger := log.New("database", file)
-	// Ensure we have some minimal caching and file guarantees
-	if cache < 16 {
-		cache = 16
-	}
-	if handles < 16 {
-		handles = 16
-	}
-	logger.Info("Allocated cache and file handles", "cache", cache, "handles", handles)
-	// Open the db and recover any potential corruptions
-	db, err := leveldb.OpenFile(file, &opt.Options{
-		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2 * opt.MiB,
-		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
-		Filter:                 filter.NewBloomFilter(10),
-	})
-	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
-		db, err = leveldb.RecoverFile(file, nil)
-	}
-	// (Re)check for errors and abort if opening of the db failed
-	if err != nil {
-		return nil, err
-	}
-	return &LDBDatabase{
-		fn:  file,
-		db:  db,
-		log: logger,
-	}, nil
+	log log.Logger 
 }
 ```
 
-Take a look at the Put and Has code below, because the code behind github.com/syndtr/goleveldb/leveldb is supported for multi-threaded access, so the following code is protected without using locks (because it implemented mutex lock internally). Most of the code here is directly called leveldb package, so it is not detailed. One of the more interesting places is the Metrics code.
+Put과 Has, Delete 함수의 구현 내용을 한 번 보자. 실질적으로 세부 구현 내용은 오픈소스 leveldb에 구현되어 있기 때문에 이를 호출하는 것에 불과한데, 오픈소스 자체에 멀티 쓰레드 접근이 구현되어 있기 때문에 메모리 DB에서 구현했던 것처럼 mutex.RWLock 을 이용할 필요가 없다.
 
 ```go
-// Put puts the given key / value to the queue
-func (db *LDBDatabase) Put(key []byte, value []byte) error {
-	// Measure the database put latency, if requested
-	if db.putTimer != nil {
-		defer db.putTimer.UpdateSince(time.Now())
-	}
-	// Generate the data to write to disk, update the meter and write
-	//value = rle.Compress(value)
+// Has retrieves if a key is present in the key-value store.
+func (db *Database) Has(key []byte) (bool, error) {
+	return db.db.Has(key, nil)
+}
 
-	if db.writeMeter != nil {
-		db.writeMeter.Mark(int64(len(value)))
+// Get retrieves the given key if it's present in the key-value store.
+func (db *Database) Get(key []byte) ([]byte, error) {
+	dat, err := db.db.Get(key, nil)
+	if err != nil {
+		return nil, err
 	}
+	return dat, nil
+}
+
+// Put inserts the given value into the key-value store.
+func (db *Database) Put(key []byte, value []byte) error {
 	return db.db.Put(key, value, nil)
 }
 
-func (db *LDBDatabase) Has(key []byte) (bool, error) {
-	return db.db.Has(key, nil)
+// Delete removes the key from the key-value store.
+func (db *Database) Delete(key []byte) error {
+	return db.db.Delete(key, nil)
 }
 ```
 
 ### Metrics processing
 
-Previously, when I created NewLDBDatabase, I didn't initialize a lot of internal Mertrics. At this time, Mertrics is nil. Initializing Mertrics is in the Meter method. The external passed in a prefix parameter, and then created a variety of Mertrics (how to create Merter, will be analyzed later on the Meter topic), and then created quitChan. Finally, a thread is called to call the db.meter method.
+LevelDB의 메트릭을 수집하는 내용이다. 기본적으로 Database 구조체를 생성할 때 meter 정보를 포함해서 생성하고 별도 고루틴을 생성해서 동작시키는 것을 알 수 있다.
+
+**Meter는 메트릭 별로 정보를 분리하기 위해 사용하고, quitChan은 별도로 실행한 고루틴을 안전하게 종료하기 위해서 사용하는 채널이다.
 
 ```go
-// Meter configures the database metrics collectors and
-func (db *LDBDatabase) Meter(prefix string) {
-	// Short circuit metering if the metrics system is disabled
-	if !metrics.Enabled {
-		return
-	}
-	// Initialize all the metrics collector at the requested prefix
-	db.getTimer = metrics.NewTimer(prefix + "user/gets")
-	db.putTimer = metrics.NewTimer(prefix + "user/puts")
-	db.delTimer = metrics.NewTimer(prefix + "user/dels")
-	db.missMeter = metrics.NewMeter(prefix + "user/misses")
-	db.readMeter = metrics.NewMeter(prefix + "user/reads")
-	db.writeMeter = metrics.NewMeter(prefix + "user/writes")
-	db.compTimeMeter = metrics.NewMeter(prefix + "compact/time")
-	db.compReadMeter = metrics.NewMeter(prefix + "compact/input")
-	db.compWriteMeter = metrics.NewMeter(prefix + "compact/output")
-
-	// Create a quit channel for the periodic collector and run it
-	db.quitLock.Lock()
-	db.quitChan = make(chan chan error)
-	db.quitLock.Unlock()
-
-	go db.meter(3 * time.Second)
+ldb := &Database{
+    fn:       file,
+    db:       db,
+    log:      logger,
+    quitChan: make(chan chan error),
 }
+ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
+ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
+ldb.compWriteMeter = metrics.NewRegisteredMeter(namespace+"compact/output", nil)
+ldb.diskSizeGauge = metrics.NewRegisteredGauge(namespace+"disk/size", nil)
+ldb.diskReadMeter = metrics.NewRegisteredMeter(namespace+"disk/read", nil)
+ldb.diskWriteMeter = metrics.NewRegisteredMeter(namespace+"disk/write", nil)
+ldb.writeDelayMeter = metrics.NewRegisteredMeter(namespace+"compact/writedelay/duration", nil)
+ldb.writeDelayNMeter = metrics.NewRegisteredMeter(namespace+"compact/writedelay/counter", nil)
+ldb.memCompGauge = metrics.NewRegisteredGauge(namespace+"compact/memory", nil)
+ldb.level0CompGauge = metrics.NewRegisteredGauge(namespace+"compact/level0", nil)
+ldb.nonlevel0CompGauge = metrics.NewRegisteredGauge(namespace+"compact/nonlevel0", nil)
+ldb.seekCompGauge = metrics.NewRegisteredGauge(namespace+"compact/seek", nil)
+
+// Start up the metrics gathering and return
+go ldb.meter(metricsGatheringInterval)
+return ldb, nil
 ```
 
-This method gets the internal counters of leveldb every 3 seconds and then publishes them to the metrics subsystem. This is an infinite loop method until quitChan receives an exit signal.
+meter 함수는 매 3초마다 실행하고 메트릭 시스템으로 수집한 정보를 전송하는 기능을 가지고 있다. 이 함수는 db 객체에서 Close 함수가 실행될 때까지 수행한다.
 
 ```go
 // meter periodically retrieves internal leveldb counters and reports them to
 // the metrics subsystem.
-// This is how a stats table look like (currently):
-// The following comment is the string we call db.db.GetProperty("leveldb.stats"), and the subsequent code needs to parse the string and write the information to the Meter.
-
+//
+// This is how a LevelDB stats table looks like (currently):
 //   Compactions
 //    Level |   Tables   |    Size(MB)   |    Time(sec)  |    Read(MB)   |   Write(MB)
 //   -------+------------+---------------+---------------+---------------+---------------
@@ -255,20 +288,43 @@ This method gets the internal counters of leveldb every 3 seconds and then publi
 //      1   |         85 |     109.27913 |      28.09293 |     213.92493 |     214.26294
 //      2   |        523 |    1000.37159 |       7.26059 |      66.86342 |      66.77884
 //      3   |        570 |    1113.18458 |       0.00000 |       0.00000 |       0.00000
-
-func (db *LDBDatabase) meter(refresh time.Duration) {
-	// Create the counters to store current and previous values
-	counters := make([][]float64, 2)
+//
+// This is how the write delay look like (currently):
+// DelayN:5 Delay:406.604657ms Paused: false
+//
+// This is how the iostats look like (currently):
+// Read(MB):3895.04860 Write(MB):3654.64712
+func (db *Database) meter(refresh time.Duration) {
+	// Create the counters to store current and previous compaction values
+	compactions := make([][]float64, 2)
 	for i := 0; i < 2; i++ {
-		counters[i] = make([]float64, 3)
+		compactions[i] = make([]float64, 4)
 	}
+	// Create storage for iostats.
+	var iostats [2]float64
+
+	// Create storage and warning log tracer for write delay.
+	var (
+		delaystats      [2]int64
+		lastWritePaused time.Time
+	)
+
+	var (
+		errc chan error
+		merr error
+	)
+
+	timer := time.NewTimer(refresh)
+	defer timer.Stop()
+
 	// Iterate ad infinitum and collect the stats
-	for i := 1; ; i++ {
+	for i := 1; errc == nil && merr == nil; i++ {
 		// Retrieve the database stats
 		stats, err := db.db.GetProperty("leveldb.stats")
 		if err != nil {
 			db.log.Error("Failed to read database stats", "err", err)
-			return
+			merr = err
+			continue
 		}
 		// Find the compaction table, skip the header
 		lines := strings.Split(stats, "\n")
@@ -276,49 +332,151 @@ func (db *LDBDatabase) meter(refresh time.Duration) {
 			lines = lines[1:]
 		}
 		if len(lines) <= 3 {
-			db.log.Error("Compaction table not found")
-			return
+			db.log.Error("Compaction leveldbTable not found")
+			merr = errors.New("compaction leveldbTable not found")
+			continue
 		}
 		lines = lines[3:]
 
-		// Iterate over all the table rows, and accumulate the entries
-		for j := 0; j < len(counters[i%2]); j++ {
-			counters[i%2][j] = 0
+		// Iterate over all the leveldbTable rows, and accumulate the entries
+		for j := 0; j < len(compactions[i%2]); j++ {
+			compactions[i%2][j] = 0
 		}
 		for _, line := range lines {
 			parts := strings.Split(line, "|")
 			if len(parts) != 6 {
 				break
 			}
-			for idx, counter := range parts[3:] {
+			for idx, counter := range parts[2:] {
 				value, err := strconv.ParseFloat(strings.TrimSpace(counter), 64)
 				if err != nil {
 					db.log.Error("Compaction entry parsing failed", "err", err)
-					return
+					merr = err
+					continue
 				}
-				counters[i%2][idx] += value
+				compactions[i%2][idx] += value
 			}
 		}
 		// Update all the requested meters
+		if db.diskSizeGauge != nil {
+			db.diskSizeGauge.Update(int64(compactions[i%2][0] * 1024 * 1024))
+		}
 		if db.compTimeMeter != nil {
-			db.compTimeMeter.Mark(int64((counters[i%2][0] - counters[(i-1)%2][0]) * 1000 * 1000 * 1000))
+			db.compTimeMeter.Mark(int64((compactions[i%2][1] - compactions[(i-1)%2][1]) * 1000 * 1000 * 1000))
 		}
 		if db.compReadMeter != nil {
-			db.compReadMeter.Mark(int64((counters[i%2][1] - counters[(i-1)%2][1]) * 1024 * 1024))
+			db.compReadMeter.Mark(int64((compactions[i%2][2] - compactions[(i-1)%2][2]) * 1024 * 1024))
 		}
 		if db.compWriteMeter != nil {
-			db.compWriteMeter.Mark(int64((counters[i%2][2] - counters[(i-1)%2][2]) * 1024 * 1024))
+			db.compWriteMeter.Mark(int64((compactions[i%2][3] - compactions[(i-1)%2][3]) * 1024 * 1024))
 		}
+		// Retrieve the write delay statistic
+		writedelay, err := db.db.GetProperty("leveldb.writedelay")
+		if err != nil {
+			db.log.Error("Failed to read database write delay statistic", "err", err)
+			merr = err
+			continue
+		}
+		var (
+			delayN        int64
+			delayDuration string
+			duration      time.Duration
+			paused        bool
+		)
+		if n, err := fmt.Sscanf(writedelay, "DelayN:%d Delay:%s Paused:%t", &delayN, &delayDuration, &paused); n != 3 || err != nil {
+			db.log.Error("Write delay statistic not found")
+			merr = err
+			continue
+		}
+		duration, err = time.ParseDuration(delayDuration)
+		if err != nil {
+			db.log.Error("Failed to parse delay duration", "err", err)
+			merr = err
+			continue
+		}
+		if db.writeDelayNMeter != nil {
+			db.writeDelayNMeter.Mark(delayN - delaystats[0])
+		}
+		if db.writeDelayMeter != nil {
+			db.writeDelayMeter.Mark(duration.Nanoseconds() - delaystats[1])
+		}
+		// If a warning that db is performing compaction has been displayed, any subsequent
+		// warnings will be withheld for one minute not to overwhelm the user.
+		if paused && delayN-delaystats[0] == 0 && duration.Nanoseconds()-delaystats[1] == 0 &&
+			time.Now().After(lastWritePaused.Add(degradationWarnInterval)) {
+			db.log.Warn("Database compacting, degraded performance")
+			lastWritePaused = time.Now()
+		}
+		delaystats[0], delaystats[1] = delayN, duration.Nanoseconds()
+
+		// Retrieve the database iostats.
+		ioStats, err := db.db.GetProperty("leveldb.iostats")
+		if err != nil {
+			db.log.Error("Failed to read database iostats", "err", err)
+			merr = err
+			continue
+		}
+		var nRead, nWrite float64
+		parts := strings.Split(ioStats, " ")
+		if len(parts) < 2 {
+			db.log.Error("Bad syntax of ioStats", "ioStats", ioStats)
+			merr = fmt.Errorf("bad syntax of ioStats %s", ioStats)
+			continue
+		}
+		if n, err := fmt.Sscanf(parts[0], "Read(MB):%f", &nRead); n != 1 || err != nil {
+			db.log.Error("Bad syntax of read entry", "entry", parts[0])
+			merr = err
+			continue
+		}
+		if n, err := fmt.Sscanf(parts[1], "Write(MB):%f", &nWrite); n != 1 || err != nil {
+			db.log.Error("Bad syntax of write entry", "entry", parts[1])
+			merr = err
+			continue
+		}
+		if db.diskReadMeter != nil {
+			db.diskReadMeter.Mark(int64((nRead - iostats[0]) * 1024 * 1024))
+		}
+		if db.diskWriteMeter != nil {
+			db.diskWriteMeter.Mark(int64((nWrite - iostats[1]) * 1024 * 1024))
+		}
+		iostats[0], iostats[1] = nRead, nWrite
+
+		compCount, err := db.db.GetProperty("leveldb.compcount")
+		if err != nil {
+			db.log.Error("Failed to read database iostats", "err", err)
+			merr = err
+			continue
+		}
+
+		var (
+			memComp       uint32
+			level0Comp    uint32
+			nonLevel0Comp uint32
+			seekComp      uint32
+		)
+		if n, err := fmt.Sscanf(compCount, "MemComp:%d Level0Comp:%d NonLevel0Comp:%d SeekComp:%d", &memComp, &level0Comp, &nonLevel0Comp, &seekComp); n != 4 || err != nil {
+			db.log.Error("Compaction count statistic not found")
+			merr = err
+			continue
+		}
+		db.memCompGauge.Update(int64(memComp))
+		db.level0CompGauge.Update(int64(level0Comp))
+		db.nonlevel0CompGauge.Update(int64(nonLevel0Comp))
+		db.seekCompGauge.Update(int64(seekComp))
+
 		// Sleep a bit, then repeat the stats collection
 		select {
-		case errc := <-db.quitChan:
+		case errc = <-db.quitChan:
 			// Quit requesting, stop hammering the database
-			errc <- nil
-			return
-
-		case <-time.After(refresh):
+		case <-timer.C:
+			timer.Reset(refresh)
 			// Timeout, gather a new set of stats
 		}
 	}
+
+	if errc == nil {
+		errc = <-db.quitChan
+	}
+	errc <- merr
 }
 ```
