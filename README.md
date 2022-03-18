@@ -22,7 +22,7 @@ Yello Paper에 있는 복잡한 수식은 모두 제거하고
 - [블록체인이 사용하는 데이터베이스 | ethdb 패키지 분석](/ethdb-analysis.md)
 - [rpc 프로토콜 분석](/rpc-analysis.md)
 - [p2p 프로토콜 분석](/p2p-analysis.md)
-- [eth protocol analysis](/eth-analysis.md)
+- [eth 프로토콜 분석](/eth-analysis.md)
 - **코어 코드 분석**
   - [blockchain index, chain_indexer analysis](/core-chain_indexer-analysis.md)
   - [bloom filter index, bloombits-analysis](/core-bloombits-analysis.md)
